@@ -1,11 +1,17 @@
 cmake_minimum_required(VERSION 3.2)    
+include(FindPkgConfig)
 project(udpreplay CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 
+pkg_check_modules(GLIB REQUIRED glib-2.0)
+add_compile_options(${GLIB_CFLAGS} -include glib.h)
+add_definitions(-Dstrlcpy=g_strlcpy)
+add_definitions(-Dstrlcat=g_strlcat)
+
 add_executable(udpreplay src/udpreplay.cpp)
 target_compile_options(udpreplay PRIVATE -Wall -Wextra -Wpedantic -Werror)
-target_link_libraries(udpreplay pcap)
+target_link_libraries(udpreplay pcap ${GLIB_LIBRARIES})
 
 install(TARGETS udpreplay DESTINATION bin/)
 
