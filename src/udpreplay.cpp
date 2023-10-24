@@ -151,6 +151,7 @@ int main(int argc, char *argv[]) {
   int ttl = -1;
   bool verboseMode = false;
   bool ipv6Packet = false;
+  int pktsToSkip = 0;
 
   /* Source and destination communication parameters */
   int broadcast = 0;
@@ -190,7 +191,7 @@ int main(int argc, char *argv[]) {
   int opt;
   int ctr=0;
   try{
-    while ((opt = getopt(argc, argv, "i:a:bls:c:n:r:t:d:p:j:R:v")) != -1) {
+    while ((opt = getopt(argc, argv, "i:a:bls:c:n:r:k:t:d:p:j:R:v")) != -1) {
       switch (opt) {
       case 'i':
         iface = (optarg);
@@ -262,6 +263,12 @@ int main(int argc, char *argv[]) {
           return 1;
         }
         break;
+      case 'k':
+        pktsToSkip = std::stoi(optarg);
+        if(pktsToSkip <= 0){
+          std::cerr << "number of packets to skip between each tx should be nonzero" 
+                     << std::endl;
+        }
       case 't':
         ttl = std::stoi(optarg);
         if (ttl < 0) {
@@ -403,6 +410,7 @@ int main(int argc, char *argv[]) {
            "  -n nanosec constant nanoseconds between packets\n"
            "  -r repeat   number of times to loop data (-1 for infinite loop)\n"
            "  -s speed    replay speed relative to pcap timestamps\n"
+           "  -k pktsToSkip after first TX, skip pktsToSkip packets before each other TX\n"
            "  -t ttl      packet ttl\n"
            "  -b          enable broadcast (SO_BROADCAST)\n"
            "  -d          destination ipv4 or ipv6 address\n"
@@ -609,16 +617,23 @@ int main(int argc, char *argv[]) {
     if(verboseMode && pcap_datalink(handle) == DLT_EN10MB){
         std::cout << "Current packet is of ethernet capture" << std::endl;
     }
-    // according to link type, we can parse the header accordingly
 
+    // according to link type, we can parse the header accordingly
     const struct ip* ip;
     const struct ip6_hdr* ipv6;
     const struct udphdr* udp;
 
+    int pktNum = 0;
     pcap_pkthdr header;
     const u_char *p;
     while ((p = pcap_next(handle, &header))) {
-
+      // after sending the first packet, skip a desired offset of packets
+      // read from pcap before sending next packet
+      if(pktsToSkip != 0 && pktNum % (1+pktsToSkip) == 1){
+        pktNum++;
+        continue;
+      }
+      pktNum++;
       if (start.tv_nsec == -1) {
         if (clock_gettime(CLOCK_MONOTONIC, &start) == -1) {
           std::cerr << "clock_gettime: " << strerror(errno) << std::endl;
@@ -659,7 +674,9 @@ int main(int argc, char *argv[]) {
         ipv6Packet = true;
       }
       if (ntohs(eth->ether_type) != ETHERTYPE_IP && !ipv6Packet) {
-        std::cerr << "Eth type not of type IPv4 or IPv6";
+        if(verboseMode){
+          std::cerr << "Eth type not of type IPv4 or IPv6";
+        }
         continue;
       }
       // perform sanitary checks
@@ -887,16 +904,18 @@ int main(int argc, char *argv[]) {
           // no ip addresses provided, so original dst addr used
           addr_ipv6.sin6_addr = {ipv6->ip6_dst};
         }
-        if(verboseMode){
-          std::cout << "Ipv6 data to be sent: " << std::endl;
-          for (int i = 0 ; i < len; i++){
-              std::cout << std::hex << static_cast<int>(d[i]);
-          }
-          std::cout << std::endl;
+        if(len > 0 && len < 2000){
+            if(verboseMode){
+              std::cout << "Ipv6 data to be sent: " << std::endl;
+              for (int i = 0 ; i < len; i++){
+                  std::cout << std::hex << static_cast<int>(d[i]);
+              }
+              std::cout << std::endl;
+            }
+            n = sendto(fd, d, len, 0,
+                            reinterpret_cast<sockaddr *>(&addr_ipv6),
+                            sizeof(addr_ipv6));
         }
-        n = sendto(fd, d, len, 0,
-                        reinterpret_cast<sockaddr *>(&addr_ipv6),
-                        sizeof(addr_ipv6));
     }
 
     // case 2: ipv4
@@ -930,20 +949,24 @@ int main(int argc, char *argv[]) {
           addr.sin_addr = {ip->ip_dst};
         }
 
-        if(verboseMode){
-          std::cout << "Ipv4 data to be sent: " << std::endl;
-          for (int i = 0 ; i < len; i++){
-              std::cout << std::hex << static_cast<int>(d[i]);
-          }
-          std::cout << std::endl;
+        if(len > 0 && len < 2000){
+            if(verboseMode){
+              std::cout << "Ipv4 data to be sent: " << std::endl;
+              for (int i = 0 ; i < len; i++){
+                  std::cout << std::hex << static_cast<int>(d[i]);
+              }
+              std::cout << std::endl;
+            }
+            n = sendto(fd, d, len, 0, reinterpret_cast<sockaddr *>(&addr),
+                        sizeof(addr));
         }
-        n = sendto(fd, d, len, 0, reinterpret_cast<sockaddr *>(&addr),
-                    sizeof(addr));
       }
       // verify if packet sent correctly
       if (n != len) {
-        std::cerr << "sendto: " << strerror(errno) << std::endl;
-        return 1;
+        if(verboseMode){
+          std::cerr << "sendto: " << strerror(errno) << std::endl;
+        }
+        continue;
       }else{
         numSent++;
         if(verboseMode){
