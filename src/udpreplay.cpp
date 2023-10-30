@@ -27,6 +27,10 @@
 #define NANOSECONDS_PER_SECOND 1000000000L
 #define MAX_UDP_PORT_RANGE 65535
 #define SLL_OFFSET 2
+/* 8 bytes for UDP header and 20 for IP header */
+#define MIN_LEN 28
+/* Theoretical limit is 65535 bytes but we do not expect sizes near that */
+#define MAX_LEN 32768
 
 /* Statistics related variables */
 int numSent;
@@ -268,7 +272,9 @@ int main(int argc, char *argv[]) {
         if(pktsToSkip <= 0){
           std::cerr << "number of packets to skip between each tx should be nonzero" 
                      << std::endl;
+          return 1;
         }
+        break;
       case 't':
         ttl = std::stoi(optarg);
         if (ttl < 0) {
@@ -877,9 +883,9 @@ int main(int argc, char *argv[]) {
     // case 1b: unprovided
 
     struct sockaddr_in6 addr_ipv6;
-    ssize_t n;
+    memset(&addr_ipv6, 0, sizeof(addr_ipv6));
+    ssize_t n = 0;
     if(ipv6Packet || !dest_ipv6.empty()){
-        memset(&addr_ipv6, 0, sizeof(addr_ipv6));
         addr_ipv6.sin6_family = AF_INET6;
 
         // check if destination port is provided
@@ -904,7 +910,7 @@ int main(int argc, char *argv[]) {
           // no ip addresses provided, so original dst addr used
           addr_ipv6.sin6_addr = {ipv6->ip6_dst};
         }
-        if(len > 0 && len < 2000){
+        if(len >= MIN_LEN && len <= MAX_LEN){
             if(verboseMode){
               std::cout << "Ipv6 data to be sent: " << std::endl;
               for (int i = 0 ; i < len; i++){
@@ -949,7 +955,7 @@ int main(int argc, char *argv[]) {
           addr.sin_addr = {ip->ip_dst};
         }
 
-        if(len > 0 && len < 2000){
+        if(len >= MIN_LEN && len <= MAX_LEN){
             if(verboseMode){
               std::cout << "Ipv4 data to be sent: " << std::endl;
               for (int i = 0 ; i < len; i++){
